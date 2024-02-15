@@ -1,0 +1,40 @@
+steps:
+- task: Bash@3
+  displayName: Image Versioning
+  inputs:
+    targetType: 'inline'
+    script: |
+      # Fetch versions from the repository
+      versions=$(curl -u "${{ parameters.username }}:${{ parameters.password }}" -X GET "http://${{ parameters.nexusip }}:${{ parameters.port }}/service/rest/v1/search/assets?repository=${{ parameters.nexusrepo }}" | jq -c '.items[].downloadUrl' | awk -F'/' '/${{ parameters.repositoryname }}\/manifests/{gsub(/"/, "", $(NF)); print $(NF)}'| sort -Vr)
+      echo "$versions"
+      
+      # Check if versions array is empty
+      if [ -n "$versions" ]; then
+          latest_version=""
+          for version in $versions; do
+              if [ -z "$latest_version" ] || [ "$(printf '%s\n' "$version" "$latest_version" | sort -V | tail -n1)" = "$version" ]; then
+                  latest_version="$version"
+              fi
+          done
+      
+          # Print only the latest version
+          echo "Latest version: $latest_version"
+      
+          # Extract version components
+          major=$(echo "$latest_version" | cut -d. -f1)
+          minor=$(echo "$latest_version" | cut -d. -f2)
+          patch=$(echo "$latest_version" | cut -d. -f3)
+          patch=$((patch + 1))
+      
+          new_version="$major.$minor.$patch"
+      else
+          # If versions array is empty, set the latest version to 1.0.0
+          new_version="1.0.0"
+      fi
+      
+      echo "Incremented version: $new_version"
+      docker tag ${{ parameters.imageName }}:${{ parameters.tag }} ${{ parameters.nexusRepoUrl }}/${{ parameters.imageName }}:$new_version
+      docker push ${{ parameters.nexusRepoUrl }}/${{ parameters.imageName }}:$new_version
+
+      sed -i "s/imagetag/$new_version/g" ./proximity-helm-charts/values.yaml
+      cat ./proximity-helm-charts/values.yaml
